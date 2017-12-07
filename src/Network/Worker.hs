@@ -112,7 +112,6 @@ work config = do
     kill yak "hush"
 
     -- Refresh the network list
-    liftIO $ putStrLn "refresh network list..."
     net <- network config
 
     -- Pause for 25% of the wait period to let in-flight messages come through.
@@ -122,7 +121,7 @@ work config = do
     -- Send everybody our final decision
     kill writerPid "time to vote"
     canon <- liftIO (takeMVar canonical)
-    liftIO $ putStrLn "voting..."
+
     broadcastTo net "answer" (Vote canon self)
     
     -- Once the votes are in, return the result.
@@ -207,5 +206,5 @@ instance Binary AckVote
 tallyVotes :: MVar (Set Msg) -> Int -> Process ()
 tallyVotes answer quorumSize = do
   self <- getSelfPid
-  ans <- replicateM quorumSize $ receiveWait [ match (\(Vote x _) -> liftIO $ putStrLn (show self ++ " got vote") >> return x) ]
+  ans <- replicateM quorumSize $ receiveWait [ match (\(Vote x _) -> return x) ]
   liftIO $ putMVar answer (S.unions ans)

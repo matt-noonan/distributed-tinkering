@@ -63,6 +63,7 @@ defaultConfig peers quorumSize (transport, seed) = do
                   , quorum = quorumSize
                   }
 
+-- | Run the protocol and cons the result into the results list.
 run :: Config -> MVar [(Int,Double)] -> Process ()
 run config results = do
   ans@(n,v) <- work config
@@ -76,7 +77,7 @@ runNetwork :: Scenario -> IO [(Int,Double)]
 
 runNetwork scenario = withTransports 7 $ \transports -> do
 
-  putStrLn ("*** Running a network with scenario " ++ show scenario)
+  putStrLn ("*** Running " ++ show scenario ++ " network scenario.")
   
   results <- newMVar []
 
@@ -175,6 +176,13 @@ spec = do
       it "obtains a response from all nodes in the majority component" $ do
         length result `shouldBe` 4
 
+    context "under a netsplit with no majority components" $ do
+
+      result <- runIO (runNetwork BigNetsplit)
+
+      it "does not receive a response from any node" $ do
+        result `shouldBe` []
+        
     context "under flaky peer location" $ do
 
       result <- runIO (runNetwork (FlakyPeerLocation 0.5))
