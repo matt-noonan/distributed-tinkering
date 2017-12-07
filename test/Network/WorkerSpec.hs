@@ -20,6 +20,7 @@ import qualified Data.Set as S
 
 import System.Random.MWC
 import Data.Vector (singleton)
+import GHC.Word (Word32)
 
 main :: IO ()
 main = hspec spec
@@ -31,28 +32,47 @@ data Network
   | FaultySends Double
   | FaultyPeerLocation Double
 
-runNetwork :: Network -> IO [(Int,Double)]
-
-runNetwork Normal = do
-  results <- newMVar []
-  peers   <- newMVar []
-  
-  transports <- forM [1..7] $ \n -> do
+withTransports :: Int -> ([Transport] -> IO a) -> IO a
+withTransports n action = do
+  -- Get the transports
+  transports <- forM [1..n] $ \k -> do
     let port = show (12340 + n)
-    --backend <- initializeBackend "127.0.0.1" port initRemoteTable
     result <- createTransport "127.0.0.1" port (\p -> ("127.0.0.1", p)) defaultTCPParameters
     either (error . show) return result
 
-  configs <- forM transports $ \transport -> do
-    gen <- initialize (singleton 0)
-    return $ Config { sendDuration = 10
-                    , waitDuration = 10
-                    , rng = uniformR (0,1) gen
-                    , makeLocalNode = newLocalNode transport initRemoteTable
-                    , announce = return ()
-                    , network = liftIO (readMVar peers)
-                    , quorum = 4
-                    }
+  -- Run the action, and then clean up the connections.
+  ans <- action transports
+
+  -- TODO: use bracket or something..
+  forM_ transports (forkIO . closeTransport)
+  return ans
+
+defaultConfig :: MVar [NodeId] -> Int -> (Transport, Word32) -> IO Config
+defaultConfig peers quorumSize (transport, seed) = do
+  gen <- initialize (singleton seed)
+  return $ Config { sendDuration = 10
+                  , waitDuration = 10
+                  , rng = uniformR (0,1) gen
+                  , makeLocalNode = newLocalNode transport initRemoteTable
+                  , announce = return ()
+                  , network = liftIO (readMVar peers)
+                  , quorum = quorumSize
+                  }
+
+run :: Config -> MVar [(Int,Double)] -> Process ()
+run config results = do
+  ans@(n,v) <- work config
+  liftIO $ do
+    putStrLn ("<" ++ show n ++ "," ++ show v ++ ">")
+    modifyMVar_ results (return . (ans:))
+                                  
+runNetwork :: Network -> IO [(Int,Double)]
+
+runNetwork Normal = withTransports 7 $ \transports -> do
+  results <- newMVar []
+  peers   <- newMVar []
+
+  configs <- mapM (defaultConfig peers 4) (zip transports [1..])
 
   nodes <- forM configs $ \config -> do
     node <- makeLocalNode config
@@ -60,22 +80,13 @@ runNetwork Normal = do
     return node
 
   tasks <- forM (zip nodes configs) $ \(node, config) -> do
-    pid  <- forkProcess node $ do self <- getSelfPid
-                                  liftIO $ putStrLn (show self ++ " started.")
-                                  ans@(n,v) <- work config
-                                  liftIO $ putStrLn ("<" ++ show n ++ "," ++ show v ++ ">")
-                                  liftIO $ modifyMVar_ results (return . (ans:))
+    pid  <- forkProcess node (run config results)
     return (node, pid)
 
-  putStrLn "*** waiting..."
+  -- Wait for the timeout period, then kill everything left over.
   threadDelay (1000000 * 20)
-  putStrLn "*** killing tasks..."
   forM_ tasks (\(node,pid) -> forkProcess node $ kill pid "time's up!")
 
-  putStrLn "*** closing transport..."
-  forM_ transports (forkIO . closeTransport)
-
-  putStrLn "*** returning the results..."
   takeMVar results
   
 spec :: Spec
