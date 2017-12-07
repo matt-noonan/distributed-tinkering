@@ -74,5 +74,5 @@ getConfig = do
                  , makeLocalNode = newLocalNode backend
                  , announce = return ()
                  , network = liftIO (findPeers backend 1000000) -- (:[]) <$> getSelfPid
-                 , quorum = 3
+                 , quorum = 4
                  } )

@@ -7,22 +7,14 @@ import Control.Distributed.Process
 import Control.Distributed.Process.Node
 
 import Data.Config
-
-import Control.Monad (forM_)
-
-import Network.Worker (work)
+import Network.Worker (iohk)
 
 main :: IO ()
 main = do
   config <- getConfig
   node   <- makeLocalNode config
-
-  magic <- rng config
-  putStrLn ("*** Started  " ++ show magic) 
-  pid    <- forkProcess node (work config)
+  pid    <- forkProcess node (iohk config)
   
-  threadDelay (1000000 * (sendDuration config + waitDuration config + 10))
-  putStrLn ("*** Out of time! " ++ show magic)
+  threadDelay (1000000 * (sendDuration config + waitDuration config))
+  
   runProcess node (kill pid "time's up!")
-  
-  putStrLn ("*** Finished " ++ show magic) 

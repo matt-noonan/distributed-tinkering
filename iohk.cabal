@@ -49,7 +49,14 @@ test-suite iohk-test
                      , iohk
                      , hspec
                      , QuickCheck
-  ghc-options:         -threaded -rtsopts -with-rtsopts=-N
+                     , containers
+                     , distributed-process
+                     , distributed-process-simplelocalnet
+                     , mwc-random
+                     , vector
+                     , network-transport
+                     , network-transport-tcp
+  ghc-options:         -threaded -O2 -rtsopts -with-rtsopts=-N
   default-language:    Haskell2010
 
 source-repository head

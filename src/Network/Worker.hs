@@ -3,7 +3,8 @@
 {-# LANGUAGE RankNTypes #-}
 
 module Network.Worker
-  ( work
+  ( iohk
+  , work
   ) where
 
 import Prelude hiding (log)
@@ -61,50 +62,36 @@ yakker config broadcast = do
     broadcast (Msg { payload   = x,
                      sender    = self,
                      timestamp = now })
-      
-work :: Config -> Process ()
+
+-- | Execute the message-sending and agreement phases, and display the result.
+iohk :: Config -> Process ()
+iohk config = do
+  (count, value) <- work config
+  liftIO $ putStrLn ("<" ++ show count ++ "," ++ show value ++ ">")
+
+-- | Run the message-sending and agreement phases, returning the number of
+--   agreed-upon messages $N$, and the sum $\sum_{k = 1}^N k \cdot m_k$,
+--   where $m_k$ is the payload attached to the $k$th agreed-upon message.
+work :: Config -> Process (Int, Double)
 work config = do
   
+    self <- getSelfPid
+
     -- Announce our existence to the network
-    liftIO $ putStrLn "announcing myself"
     announce config
 
-    liftIO (threadDelay 1000000)
-    
     -- Gather the process ids for this network
-    liftIO $ putStrLn "getting network configuration..."
     net <- network config
-    let broadcastTo name = \msg -> forM_ net $ \node -> nsendRemote node name msg
+    let broadcastTo peers name = \msg -> forM_ peers $ \peer -> nsendRemote peer name msg
         quorumSize = quorum config
-    liftIO $ putStrLn ("got: " ++ show net)
-    liftIO $ putStrLn ("quorum size is " ++ show quorumSize)
 
     -- Spawn another worker on the local node
-    liftIO $ putStrLn "spawning a worker locally..."
     seen <- liftIO (newMVar S.empty)
     register "iohk-test" =<< spawnLocal (accumulate seen)
 
-    -- Send everybody in the network a message
-    liftIO $ putStrLn "saying hello..."
-    self <- getSelfPid
-
-    yak <- spawnLocal (yakker config (broadcastTo "iohk-test"))
-
-    liftIO $ putStrLn "waiting..."
-
-    liftIO $ do
-      now <- getCurrentTime
-      putStrLn ("began waiting at " ++ show now)
-      threadDelay (1000000 * sendDuration config)
-      now <- getCurrentTime
-      putStrLn ("...ended waiting at " ++ show now)
-
-    kill yak "hush"
-
-    liftIO $ putStrLn "making an agreement..."
-
     canonical <- liftIO (newMVar S.empty)
-    register "writer" =<< spawnLocal (applyWrite canonical)
+    writerPid <- spawnLocal (applyWrite canonical)
+    register "writer" writerPid
 
     answer <- liftIO newEmptyMVar
     register "answer" =<< spawnLocal (tallyVotes answer quorumSize)
@@ -112,29 +99,34 @@ work config = do
     -- Spawn a worker that will periodically check the 'seen' set and,
     -- if there are elements of seen that are not yet canonical,
     -- request a distributed write of the new elements.
-    _ <- spawnLocal (requestWrite (broadcastTo "writer") quorumSize seen canonical)
+    _ <- spawnLocal (requestWrite (broadcastTo net "writer") quorumSize seen canonical)
 
-    say "begin waiting some more..."
-    liftIO $ do
-      threadDelay (500000 * waitDuration config)
-      withMVar canonical $ \ans -> do
-        let result = sum (zipWith (*) (map payload $ S.toList ans) [1..])
-        putStrLn (show self ++ ": <" ++ show (length ans) ++ "," ++ show result ++ ">")
+
+    -- Send everybody in the network a message
+    yak <- spawnLocal (yakker config (broadcastTo net "iohk-test"))
+
+    -- Wait for the sending phase to finish.
+    liftIO $ threadDelay (1000000 * sendDuration config)
+
+    kill yak "hush"
+
+    -- Refresh the network list
+    liftIO $ putStrLn "refresh network list..."
+    net <- network config
+
+    -- Pause for 25% of the wait period to let in-flight messages come through.
+    -- Why 25%? 
+    liftIO $ threadDelay (250000 * waitDuration config)
 
     -- Send everybody our final decision
-    say "voting..."
-    canon <- inspect canonical
-    --broadcastTo "answer" (Vote canon self)
-    forM_ net $ \peer -> do
-      liftIO $ putStrLn (show self ++ " sending vote to " ++ show peer)
-      nsendRemote peer "answer" (Vote canon self)
+    kill writerPid "time to vote"
+    canon <- liftIO (takeMVar canonical)
+    liftIO $ putStrLn "voting..."
+    broadcastTo net "answer" (Vote canon self)
     
-    -- Once the votes are in, display the result.
+    -- Once the votes are in, return the result.
     ans <- liftIO (takeMVar answer)
-    let result = sum (zipWith (*) (map payload $ S.toList ans) [1..])
-    liftIO $ putStrLn (show self ++ " [ans]: <" ++ show (length ans) ++ "," ++ show result ++ ">")
-    say "*** DONE ***"
-      
+    return (S.size ans, sum (zipWith (*) (map payload $ S.toList ans) [1..]))
     
 
 newtype Round = Round Int deriving (Eq, Show, Generic)
@@ -144,7 +136,7 @@ data RequestWrite = RequestWrite { writeId :: Round, writer :: ProcessId, delta 
   deriving (Show, Generic)
 instance Binary RequestWrite
 
-newtype Ack = Ack Round deriving (Eq, Show, Generic)
+data Ack = Ack Round ProcessId deriving (Eq, Show, Generic)
 instance Binary Ack
 
 requestWrite :: (RequestWrite -> Process ())
@@ -159,7 +151,10 @@ requestWrite broadcast quorumSize seen canonical = forM_ [0..] $ \k -> do
   novel <- (seen %= (`S.difference` canon))
 
   -- Request a network write of the novel elements
-  when (not (S.null novel)) (write broadcast quorumSize (Round k) novel)
+  -- Retry write if a timer goes off?
+  when (not (S.null novel)) $ do
+    _ <- spawnLocal $ write broadcast quorumSize (Round k) novel
+    return ()
 
   -- Pause for 1/10 of a second
   liftIO (threadDelay 100000)
@@ -176,18 +171,32 @@ write broadcast quorumSize wid vs = do
   broadcast (RequestWrite { writeId = wid, writer = self, delta = vs })
 
   -- Wait for a quorum of acks
-  replicateM_ quorumSize (receiveWait [ matchIf (== Ack wid) (const $ return ()) ])
-  -- At this point, a majority of the network has accepted our write,
-  -- so it will appear in any read that touches a majority of the network.
+  quorum <- replicateM quorumSize (receiveWait [
+                                      matchIf (\(Ack k _) -> k == wid)
+                                              (\(Ack _ pid) -> return pid) ])
+  
+  -- At this point, a majority of the network is ready to accept this write.
+  -- Tell the quorum to go ahead and commit.
+  -- BUG: we need to ensure that the quorum actually did commit here. If only
+  --      some members of the quorum actually committed, then we lose the
+  --      guarantee that the write will be visible on any majority.
+  forM_ quorum $ \peer -> send peer Commit
+
+data Commit = Commit deriving (Show, Generic)
+instance Binary Commit
 
 applyWrite :: MVar (Set Msg) -> Process ()
-applyWrite seen = forever (receiveWait [ match go ])
+applyWrite canonical = forever (receiveWait [ match go ])
   where
     go req = do
-      -- Update the seen set, and send an ack back to the sender.
-      seen %= S.union (delta req)
-      send (writer req) (Ack $ writeId req)
-
+      -- Send an ack back to the sender.
+      -- The ack includes a process handle that can be triggered to commit
+      -- the write.
+      commit <- spawnLocal (receiveWait [match (\Commit -> do canonical %= S.union (delta req)
+                                                              return () ) ])
+      send (writer req) (Ack (writeId req) commit)
+      
+      
 data Vote = Vote (Set Msg) ProcessId deriving (Show, Generic)
 instance Binary Vote
 
@@ -197,9 +206,5 @@ instance Binary AckVote
 tallyVotes :: MVar (Set Msg) -> Int -> Process ()
 tallyVotes answer quorumSize = do
   self <- getSelfPid
-  liftIO (putStrLn ("** TALLY-HO! " ++ show self))
-  ans <- replicateM quorumSize $ do
-    receiveWait [ match (\(Vote x pid) -> do liftIO (putStrLn (show self ++ " tallied vote from " ++ show pid))
-                                             return x) ]
-
+  ans <- replicateM quorumSize $ receiveWait [ match (\(Vote x _) -> liftIO $ putStrLn (show self ++ " got vote") >> return x) ]
   liftIO $ putMVar answer (S.unions ans)
