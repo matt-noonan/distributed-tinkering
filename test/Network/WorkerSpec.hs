@@ -44,7 +44,7 @@ withTransports n action = do
   ans <- action transports
 
   -- TODO: use bracket or something..
-  forM_ transports (forkIO . closeTransport)
+  forM_ transports closeTransport
   return ans
 
 defaultConfig :: MVar [NodeId] -> Int -> (Transport, Word32) -> IO Config
