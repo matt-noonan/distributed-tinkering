@@ -47,12 +47,14 @@ these configuration options are modified to simulate various kinds of network fa
 
 Each node $`n`$ in the network maintains a set of *seen* messages $`S_n`$, and a set of
 *canonical* messages $`C_n`$. During the initial phase, all nodes send messages with
-random payloads to each other, which are accumulated into the *seen* sets.
+random payloads to each other, which are accumulated into the *seen* sets. The idea is
+that $`S_n`$ represents all messages that a node has seen so far, while $`C_n`$
+represents all messages that the network has *agreed upon* that the node knows about.
 
 ## The canonical message invariant
 
 The *canonical* messages $`C_n`$ have the important invariant that
-$`x \in C_n`$ if and only if $`x`$ is in $`C_m`$ for at least half of the nodes in the
+$`m \in C_n`$ if and only if $`m`$ is in $`C_p`$ for at least half of the nodes in the
 network.
 It follows that for any $`X \subseteq N`$ with $`|X| > \frac{|N|}{2}`$,
 
