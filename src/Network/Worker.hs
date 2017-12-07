@@ -86,9 +86,10 @@ work config = do
     -- chance to see new nodes that may have come online.
     net <- network config
 
-    -- Pause for 75% of the wait period to let in-flight messages come through.
-    -- Why 75%? 
-    liftIO $ threadDelay (750000 * waitDuration config)
+    -- Pause for 50% of the wait period to let in-flight messages come through.
+    -- Why 50%? It's just a no-information guess about how much time to allocate
+    -- to canonical set propagation vs voting.
+    liftIO $ threadDelay (500000 * waitDuration config)
 
     -- Send everybody our vote for the final result
     kill writerPid "time to vote"
