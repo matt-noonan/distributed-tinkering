@@ -140,7 +140,7 @@ spec = do
 
     context "under netsplit conditions with no majority" $ do
 
-      result <- runIO (runNetwork Netsplit)
+      result <- runIO (runNetwork BigNetsplit)
 
       it "does not report anything" $ result `shouldBe` []
 

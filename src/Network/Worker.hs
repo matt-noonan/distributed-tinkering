@@ -82,7 +82,6 @@ work config = do
 
     -- Gather the process ids for this network
     net <- network config
-    liftIO (putStrLn $ "*** " ++ show self ++ " sees network " ++ show net)
     let broadcastTo peers name = \msg -> forM_ peers $ \peer -> nsendRemote peer name msg
         quorumSize = quorum config
 
