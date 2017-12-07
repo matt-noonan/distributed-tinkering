@@ -29,8 +29,8 @@ data Network
   = Normal
   | Netsplit
   | BigNetsplit
-  | FaultySends Double
-  | FaultyPeerLocation Double
+  | FlakySends Double
+  | FlakyPeerLocation Double
 
 withTransports :: Int -> ([Transport] -> IO a) -> IO a
 withTransports n action = do
@@ -112,6 +112,19 @@ configureNetwork BigNetsplit quorumSize transports = do
   let fragments = chunksOf (quorumSize - 1) transports
   concat <$> mapM (configureNetwork Normal quorumSize) fragments
 
+configureNetwork (FlakyPeerLocation prob) quorumSize transports = do
+  net <- configureNetwork Normal quorumSize transports
+  forM net $ \(node, config) -> do
+    let coin = (<= prob) <$> liftIO (rng config)
+    return (node, config { network = flaky coin (network config) })
+
+flaky :: Monad m => m Bool -> m [a] -> m [a]
+flaky coin action = do
+  results <- action
+  selected <- forM results $ \x -> do flip <- coin
+                                      return (if flip then [x] else [])
+  return (concat selected)
+
 spec :: Spec
 
 spec = do
@@ -138,10 +151,11 @@ spec = do
       it "obtains a response from all nodes in the majority component" $ do
         length result `shouldBe` 4
 
-    context "under netsplit conditions with no majority" $ do
+    context "under flaky peer locatoin" $ do
 
-      result <- runIO (runNetwork BigNetsplit)
+      result <- runIO (runNetwork (FlakyPeerLocation 0.5))
 
-      it "does not report anything" $ result `shouldBe` []
+      it "agrees on a canonical set of messages" $ do
+        S.size (S.fromList result) `shouldBe` 1
 
 
