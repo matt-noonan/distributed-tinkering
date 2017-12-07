@@ -25,7 +25,7 @@ iohk-test: kevent: does not exist (No such file or directory)
 iohk-test: kevent: invalid argument (Bad file descriptor)
 ```
 
-# Running your own test cases
+## Running your own test cases
 
 You can set up your own network by editing `Data.Config`. There are several
 configuration functions that can be tweaked.
@@ -35,7 +35,9 @@ configuration functions that can be tweaked.
     This gives the worker a chance to broadcast its presence to the network.
   * `network :: Process [NodeId]`: An action that is invoked to obtain a list of
     peer nodes. You will probably want to edit this action as appropriate for your
-    test harness.
+    test harness. Workers actually run this action twice: once when they start,
+    and once after the message-sending phase is complete. The second run lets
+    early-starting workers potentially learn about later-starting peers.
   * `quorum` :: The number of nodes required to form a majority in the network.
 
 For usage examples, see the test harness in `test/Network/WorkerSpec.hs`, where
