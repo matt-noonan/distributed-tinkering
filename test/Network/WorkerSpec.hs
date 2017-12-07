@@ -7,7 +7,7 @@ import Data.Config
 import Network.Worker
 
 import Control.Distributed.Process
-import Control.Distributed.Process.Node (localNodeId, runProcess, forkProcess, initRemoteTable, newLocalNode)
+import Control.Distributed.Process.Node (LocalNode, localNodeId, runProcess, forkProcess, initRemoteTable, newLocalNode)
 import Network.Transport
 import Network.Transport.TCP (createTransport, defaultTCPParameters)
 --import Control.Distributed.Process.Backend.SimpleLocalnet
@@ -36,7 +36,7 @@ withTransports :: Int -> ([Transport] -> IO a) -> IO a
 withTransports n action = do
   -- Get the transports
   transports <- forM [1..n] $ \k -> do
-    let port = show (12340 + n)
+    let port = show (12340 + k)
     result <- createTransport "127.0.0.1" port (\p -> ("127.0.0.1", p)) defaultTCPParameters
     either (error . show) return result
 
@@ -68,18 +68,13 @@ run config results = do
                                   
 runNetwork :: Network -> IO [(Int,Double)]
 
-runNetwork Normal = withTransports 7 $ \transports -> do
+runNetwork net = withTransports 7 $ \transports -> do
   results <- newMVar []
-  peers   <- newMVar []
 
-  configs <- mapM (defaultConfig peers 4) (zip transports [1..])
+  let quorumSize = 1 + (length transports `div` 2)
+  net <- configureNetwork net quorumSize transports
 
-  nodes <- forM configs $ \config -> do
-    node <- makeLocalNode config
-    modifyMVar_ peers (return . (localNodeId node:))
-    return node
-
-  tasks <- forM (zip nodes configs) $ \(node, config) -> do
+  tasks <- forM net $ \(node, config) -> do
     pid  <- forkProcess node (run config results)
     return (node, pid)
 
@@ -88,7 +83,27 @@ runNetwork Normal = withTransports 7 $ \transports -> do
   forM_ tasks (\(node,pid) -> forkProcess node $ kill pid "time's up!")
 
   takeMVar results
+
+configureNetwork :: Network -> Int -> [Transport] -> IO [(LocalNode, Config)]
+
+configureNetwork Normal quorumSize transports = do
+
+  peers   <- newMVar []
   
+  configs <- mapM (defaultConfig peers quorumSize) (zip transports [1..])
+
+  forM configs $ \config -> do
+    node <- makeLocalNode config
+    modifyMVar_ peers (return . (localNodeId node:))
+    return (node, config)
+
+configureNetwork Netsplit quorumSize transports = do
+
+  net1 <- configureNetwork Normal quorumSize (take quorumSize transports)
+  net2 <- configureNetwork Normal quorumSize (drop quorumSize transports)
+
+  return (net1 ++ net2)
+
 spec :: Spec
 
 spec = do
