@@ -86,14 +86,17 @@ work config = do
         broadcastTo = broadcast config
         quorumSize = quorum config
 
-    -- Spawn another worker on the local node
+    -- Spawn a worker to accumulate incoming random numbers to the "seen" set.
     seen <- liftIO (newMVar S.empty)
     register "iohk-test" =<< spawnLocal (accumulate seen)
 
+    -- Spawn a worker that will maintain the "canonical" set of messages,
+    -- and update it upon request.
     canonical <- liftIO (newMVar S.empty)
     writerPid <- spawnLocal (applyWrite canonical)
     register "writer" writerPid
 
+    -- Spawn a worker that accumulates votes for the agreed-upon answer.
     answer <- liftIO newEmptyMVar
     register "answer" =<< spawnLocal (tallyVotes answer quorumSize)
     
@@ -103,25 +106,22 @@ work config = do
     _ <- spawnLocal (requestWrite (broadcastTo net "writer") quorumSize seen canonical)
 
 
-    -- Send everybody in the network a message
+    -- Send everybody in the network random values for sendDuration seconds.
     yak <- spawnLocal (yakker config (broadcastTo net "iohk-test"))
-
-    -- Wait for the sending phase to finish.
     liftIO $ threadDelay (1000000 * sendDuration config)
-
     kill yak "hush"
 
-    -- Refresh the network list
+    -- Refresh the network list; this gives workers that started early a
+    -- chance to see new nodes that may have come online.
     net <- network config
 
-    -- Pause for 25% of the wait period to let in-flight messages come through.
-    -- Why 25%? 
-    liftIO $ threadDelay (250000 * waitDuration config)
+    -- Pause for 75% of the wait period to let in-flight messages come through.
+    -- Why 75%? 
+    liftIO $ threadDelay (750000 * waitDuration config)
 
-    -- Send everybody our final decision
+    -- Send everybody our vote for the final result
     kill writerPid "time to vote"
     canon <- liftIO (takeMVar canonical)
-
     broadcastTo net "answer" (Vote canon self)
     
     -- Once the votes are in, return the result.

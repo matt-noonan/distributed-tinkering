@@ -27,6 +27,7 @@ import GHC.Word (Word32)
 main :: IO ()
 main = hspec spec
 
+-- | Network scenarios to test
 data Scenario
   = Normal
   | Netsplit
@@ -34,7 +35,44 @@ data Scenario
   | FlakySends Double
   | FlakyPeerLocation Double
   deriving Show
-           
+
+spec :: Spec
+spec = do
+
+  describe "the number-passing protocol" $ do
+
+    context "under normal network conditions" $ do
+
+      result <- runIO (runNetwork Normal)
+      it "agrees on a canonical set of messages" (S.size (S.fromList result) `shouldBe` 1)
+      it "obtains a response from all nodes"     (length result `shouldBe` 7)
+      
+    context "under binary netsplit conditions" $ do
+      
+      result <- runIO (runNetwork Netsplit)
+      
+      it "agrees on a canonical set of messages" (S.size (S.fromList result) `shouldBe` 1)
+      it "obtains a majority response"           (length result `shouldBe` 4)
+
+    context "under a netsplit with no majority components" $ do
+
+      result <- runIO (runNetwork BigNetsplit)
+
+      it "does not receive a response from any node" (result `shouldBe` [])
+        
+    context "under flaky peer location" $ do
+
+      result <- runIO (runNetwork (FlakyPeerLocation 0.5))
+
+      it "agrees on a canonical set of messages" (S.size (S.fromList result) `shouldBe` 1)
+
+    context "under flaky message sending" $ do
+
+      result <- runIO (runNetwork (FlakySends 0.5))
+
+      it "agrees on a canonical set of messages" (S.size (S.fromList result) `shouldBe` 1)
+        
+-- | Create some Transports, pass them to the action, and clean up after.           
 withTransports :: Int -> ([Transport] -> IO a) -> IO a
 withTransports n action = do
   -- Get the transports
@@ -50,6 +88,7 @@ withTransports n action = do
   forM_ transports closeTransport
   return ans
 
+-- | Create a default node configuration with the given transport and random seed.
 defaultConfig :: MVar [NodeId] -> Int -> (Transport, Word32) -> IO Config
 defaultConfig peers quorumSize (transport, seed) = do
   gen <- initialize (singleton seed)
@@ -84,6 +123,7 @@ runNetwork scenario = withTransports 7 $ \transports -> do
   let quorumSize = 1 + (length transports `div` 2)
   net <- configureNetwork scenario quorumSize transports
 
+  -- Launch each worker task
   tasks <- forM net $ \(node, config) -> do
     pid  <- forkProcess node (run config results)
     return (node, pid)
@@ -94,19 +134,13 @@ runNetwork scenario = withTransports 7 $ \transports -> do
 
   takeMVar results
 
-chunksOf :: Int -> [a] -> [[a]]
-chunksOf n [] = []
-chunksOf n xs = take n xs : chunksOf n (drop n xs)
-
-
 -- | Configure a network for the given failure scenario.
 
 configureNetwork :: Scenario -> Int -> [Transport] -> IO [(LocalNode, Config)]
 
+  -- A normal, healthy network.
 configureNetwork Normal quorumSize transports = do
-
-  peers   <- newMVar []
-  
+  peers   <- newMVar []  
   configs <- mapM (defaultConfig peers quorumSize) (zip transports [1..])
 
   forM configs $ \config -> do
@@ -114,6 +148,7 @@ configureNetwork Normal quorumSize transports = do
     modifyMVar_ peers (return . (localNodeId node:))
     return (node, config)
 
+-- A network split into two components
 configureNetwork Netsplit quorumSize transports = do
 
   net1 <- configureNetwork Normal quorumSize (take quorumSize transports)
@@ -121,16 +156,19 @@ configureNetwork Netsplit quorumSize transports = do
 
   return (net1 ++ net2)
 
+-- A network split into components that are each too small to form a majority.
 configureNetwork BigNetsplit quorumSize transports = do
   let fragments = chunksOf (quorumSize - 1) transports
   concat <$> mapM (configureNetwork Normal quorumSize) fragments
 
+-- A network where peer location only succeeds with probability 'prob'.
 configureNetwork (FlakyPeerLocation prob) quorumSize transports = do
   net <- configureNetwork Normal quorumSize transports
   forM net $ \(node, config) -> do
     let coin = (<= prob) <$> liftIO (rng config)
     return (node, config { network = network config >>= flaky coin })
 
+-- A network where messages only send successfully with probability 'prob'.
 configureNetwork (FlakySends prob) quorumSize transports = do
   net <- configureNetwork Normal quorumSize transports
 
@@ -150,51 +188,8 @@ flaky coin results = fmap concat $ forM results $ \x -> do
   flip <- coin
   return (if flip then [x] else [])
 
-spec :: Spec
-
-spec = do
-
-  describe "the number-passing protocol" $ do
-
-    context "under normal network conditions" $ do
-
-      result <- runIO (runNetwork Normal)
-      
-      it "agrees on a canonical set of messages" $ do
-        S.size (S.fromList result) `shouldBe` 1
-
-      it "obtains a response from all nodes" $ do
-        length result `shouldBe` 7
-      
-    context "under binary netsplit conditions" $ do
-
-      result <- runIO (runNetwork Netsplit)
-
-      it "agrees on a canonical set of messages" $ do
-        S.size (S.fromList result) `shouldBe` 1
-
-      it "obtains a response from all nodes in the majority component" $ do
-        length result `shouldBe` 4
-
-    context "under a netsplit with no majority components" $ do
-
-      result <- runIO (runNetwork BigNetsplit)
-
-      it "does not receive a response from any node" $ do
-        result `shouldBe` []
-        
-    context "under flaky peer location" $ do
-
-      result <- runIO (runNetwork (FlakyPeerLocation 0.5))
-
-      it "agrees on a canonical set of messages" $ do
-        S.size (S.fromList result) `shouldBe` 1
+chunksOf :: Int -> [a] -> [[a]]
+chunksOf n [] = []
+chunksOf n xs = take n xs : chunksOf n (drop n xs)
 
 
-    context "under flaky message sending" $ do
-
-      result <- runIO (runNetwork (FlakySends 0.5))
-
-      it "agrees on a canonical set of messages" $ do
-        S.size (S.fromList result) `shouldBe` 1
-        
