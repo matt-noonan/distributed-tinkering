@@ -120,3 +120,13 @@ spec = do
       it "obtains a response from all nodes" $ do
         length result `shouldBe` 7
       
+    context "under binary netsplit conditions" $ do
+
+      result <- runIO (runNetwork Netsplit)
+
+      it "agrees on a canonical set of messages" $ do
+        S.size (S.fromList result) `shouldBe` 1
+
+      it "obtains a response from all nodes in the majority component" $ do
+        length result `shouldBe` 4
+      
