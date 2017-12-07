@@ -27,13 +27,14 @@ import GHC.Word (Word32)
 main :: IO ()
 main = hspec spec
 
-data Network
+data Scenario
   = Normal
   | Netsplit
   | BigNetsplit
   | FlakySends Double
   | FlakyPeerLocation Double
-
+  deriving Show
+           
 withTransports :: Int -> ([Transport] -> IO a) -> IO a
 withTransports n action = do
   -- Get the transports
@@ -68,14 +69,19 @@ run config results = do
   liftIO $ do
     putStrLn ("<" ++ show n ++ "," ++ show v ++ ">")
     modifyMVar_ results (return . (ans:))
-                                  
-runNetwork :: Network -> IO [(Int,Double)]
 
-runNetwork net = withTransports 7 $ \transports -> do
+-- | Create and execute the protocol over a 7-node network,
+--   subject to the given failure scenario.
+runNetwork :: Scenario -> IO [(Int,Double)]
+
+runNetwork scenario = withTransports 7 $ \transports -> do
+
+  putStrLn ("*** Running a network with scenario " ++ show scenario)
+  
   results <- newMVar []
 
   let quorumSize = 1 + (length transports `div` 2)
-  net <- configureNetwork net quorumSize transports
+  net <- configureNetwork scenario quorumSize transports
 
   tasks <- forM net $ \(node, config) -> do
     pid  <- forkProcess node (run config results)
@@ -91,7 +97,10 @@ chunksOf :: Int -> [a] -> [[a]]
 chunksOf n [] = []
 chunksOf n xs = take n xs : chunksOf n (drop n xs)
 
-configureNetwork :: Network -> Int -> [Transport] -> IO [(LocalNode, Config)]
+
+-- | Configure a network for the given failure scenario.
+
+configureNetwork :: Scenario -> Int -> [Transport] -> IO [(LocalNode, Config)]
 
 configureNetwork Normal quorumSize transports = do
 
@@ -119,7 +128,7 @@ configureNetwork (FlakyPeerLocation prob) quorumSize transports = do
   net <- configureNetwork Normal quorumSize transports
   forM net $ \(node, config) -> do
     let coin = (<= prob) <$> liftIO (rng config)
-    return (node, config { network = flaky coin (network config) })
+    return (node, config { network = network config >>= flaky coin })
 
 configureNetwork (FlakySends prob) quorumSize transports = do
   net <- configureNetwork Normal quorumSize transports
@@ -128,17 +137,17 @@ configureNetwork (FlakySends prob) quorumSize transports = do
     let badBroadcast :: forall a. Serializable a => [NodeId] -> String -> a -> Process ()
         badBroadcast network name msg = do
           let coin = (<= prob) <$> liftIO (rng config)
-          subset <- flaky coin (return network)
+          subset <- flaky coin network
           (broadcast config) subset name msg
           
     return (node, config { broadcast = badBroadcast })
 
-flaky :: Monad m => m Bool -> m [a] -> m [a]
-flaky coin action = do
-  results <- action
-  selected <- forM results $ \x -> do flip <- coin
-                                      return (if flip then [x] else [])
-  return (concat selected)
+-- | Given a list and a source of booleans, drop elements of
+--   the list whenever the source yields False.
+flaky :: Monad m => m Bool -> [a] -> m [a]
+flaky coin results = fmap concat $ forM results $ \x -> do
+  flip <- coin
+  return (if flip then [x] else [])
 
 spec :: Spec
 
