@@ -1,7 +1,8 @@
 name:                iohk
 version:             0.1.0.0
--- synopsis:
--- description:
+synopsis:            Matt Noonan's solution to the IOHK question
+description:         A Cloud Haskell protocol for reaching consensus about what set
+                     of messages was received.
 homepage:            https://github.com/matt-noonan/iohk#readme
 license:             BSD3
 license-file:        LICENSE

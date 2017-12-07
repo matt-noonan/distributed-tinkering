@@ -8,7 +8,40 @@ stack build
 
 from the project's top-level directory.
 
-# The idea
+# Test cases
+
+A suite of tests that operate on a 7-node network under a variety of failure scenarios
+can be run by executing
+
+```bash
+stack test
+```
+
+I tested this on OS X and on Linux (CentOS). The test suite passes consistently on
+CentOS, but on OS X I have observed intermittent errors of the form
+
+```
+iohk-test: kevent: does not exist (No such file or directory)
+iohk-test: kevent: invalid argument (Bad file descriptor)
+```
+
+# Running your own test cases
+
+You can set up your own network by editing `Data.Config`. There are several
+configuration functions that can be tweaked.
+
+  * `makeLocalNode :: IO LocalNode`: The action used to create a new local node.
+  * `announce :: Process ()`: An action that is invoked when a worker starts up.
+    This gives the worker a chance to broadcast its presence to the network.
+  * `network :: Process [NodeId]`: An action that is invoked to obtain a list of
+    peer nodes. You will probably want to edit this action as appropriate for your
+    test harness.
+  * `quorum` :: The number of nodes required to form a majority in the network.
+
+For usage examples, see the test harness in `test/Network/WorkerSpec.hs`, where
+these configuration options are modified to simulate various kinds of network faults.
+
+# How does it work?
 
 Each node $`n`$ in the network maintains a set of *seen* messages $`S_n`$, and a set of
 *canonical* messages $`C_n`$. During the initial phase, all nodes send messages with
@@ -57,11 +90,3 @@ This situation is similar to Paxos, but simpler in many ways. Partly, this
 simplification comes from the fact that updates to the distributed state machine's
 state all commute, so nodes do not need to worry about message sequencing.
 
-# Test cases
-
-A suite of tests that operate on a 7-node network under a variety of failure scenarios
-can be run by executing
-
-```bash
-stack test
-```
