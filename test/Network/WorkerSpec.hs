@@ -84,6 +84,10 @@ runNetwork net = withTransports 7 $ \transports -> do
 
   takeMVar results
 
+chunksOf :: Int -> [a] -> [[a]]
+chunksOf n [] = []
+chunksOf n xs = take n xs : chunksOf n (drop n xs)
+
 configureNetwork :: Network -> Int -> [Transport] -> IO [(LocalNode, Config)]
 
 configureNetwork Normal quorumSize transports = do
@@ -103,6 +107,10 @@ configureNetwork Netsplit quorumSize transports = do
   net2 <- configureNetwork Normal quorumSize (drop quorumSize transports)
 
   return (net1 ++ net2)
+
+configureNetwork BigNetsplit quorumSize transports = do
+  let fragments = chunksOf (quorumSize - 1) transports
+  concat <$> mapM (configureNetwork Normal quorumSize) fragments
 
 spec :: Spec
 
@@ -129,4 +137,11 @@ spec = do
 
       it "obtains a response from all nodes in the majority component" $ do
         length result `shouldBe` 4
-      
+
+    context "under netsplit conditions with no majority" $ do
+
+      result <- runIO (runNetwork Netsplit)
+
+      it "does not report anything" $ result `shouldBe` []
+
+
