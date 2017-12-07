@@ -53,15 +53,15 @@ accumulate :: MVar (Set Msg) -> Process ()
 accumulate seen = forever (receiveWait [ match (\msg -> seen %= S.insert msg) ])
     
 yakker :: Config -> (Msg -> Process ()) -> Process ()
-yakker config broadcast = do
+yakker config netsend = do
   self <- getSelfPid
   
   forever $ do
     now <- liftIO getCurrentTime
     x   <- liftIO (rng config)
-    broadcast (Msg { payload   = x,
-                     sender    = self,
-                     timestamp = now })
+    netsend (Msg { payload   = x,
+                   sender    = self,
+                   timestamp = now })
 
 -- | Execute the message-sending and agreement phases, and display the result.
 iohk :: Config -> Process ()
@@ -82,7 +82,8 @@ work config = do
 
     -- Gather the process ids for this network
     net <- network config
-    let broadcastTo peers name = \msg -> forM_ peers $ \peer -> nsendRemote peer name msg
+    let broadcastTo :: forall a. Serializable a => [NodeId] -> String -> a -> Process ()
+        broadcastTo = broadcast config
         quorumSize = quorum config
 
     -- Spawn another worker on the local node
@@ -144,7 +145,7 @@ requestWrite :: (RequestWrite -> Process ())
              -> MVar (Set Msg)
              -> MVar (Set Msg)
              -> Process ()
-requestWrite broadcast quorumSize seen canonical = forM_ [0..] $ \k -> do
+requestWrite netsend quorumSize seen canonical = forM_ [0..] $ \k -> do
   
   -- Remove any canonical values from seen; the remaining values are apparently novel
   canon <- inspect canonical
@@ -153,7 +154,7 @@ requestWrite broadcast quorumSize seen canonical = forM_ [0..] $ \k -> do
   -- Request a network write of the novel elements
   -- Retry write if a timer goes off?
   when (not (S.null novel)) $ do
-    _ <- spawnLocal $ write broadcast quorumSize (Round k) novel
+    _ <- spawnLocal $ write netsend quorumSize (Round k) novel
     return ()
 
   -- Pause for 1/10 of a second
@@ -164,11 +165,11 @@ write :: (RequestWrite -> Process ())
       -> Round
       -> Set Msg
       -> Process ()
-write broadcast quorumSize wid vs = do
+write netsend quorumSize wid vs = do
   self <- getSelfPid
 
   -- Send a write request to the entire network
-  broadcast (RequestWrite { writeId = wid, writer = self, delta = vs })
+  netsend (RequestWrite { writeId = wid, writer = self, delta = vs })
 
   -- Wait for a quorum of acks
   quorum <- replicateM quorumSize (receiveWait [

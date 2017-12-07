@@ -1,3 +1,4 @@
+{-# LANGUAGE RankNTypes #-}
 
 module Network.WorkerSpec (main, spec) where
 
@@ -8,6 +9,7 @@ import Network.Worker
 
 import Control.Distributed.Process
 import Control.Distributed.Process.Node (LocalNode, localNodeId, runProcess, forkProcess, initRemoteTable, newLocalNode)
+import Control.Distributed.Process.Serializable
 import Network.Transport
 import Network.Transport.TCP (createTransport, defaultTCPParameters)
 --import Control.Distributed.Process.Backend.SimpleLocalnet
@@ -56,6 +58,7 @@ defaultConfig peers quorumSize (transport, seed) = do
                   , makeLocalNode = newLocalNode transport initRemoteTable
                   , announce = return ()
                   , network = liftIO (readMVar peers)
+                  , broadcast = \peers name msg -> (forM_ peers $ \peer -> nsendRemote peer name msg)
                   , quorum = quorumSize
                   }
 
@@ -118,6 +121,18 @@ configureNetwork (FlakyPeerLocation prob) quorumSize transports = do
     let coin = (<= prob) <$> liftIO (rng config)
     return (node, config { network = flaky coin (network config) })
 
+configureNetwork (FlakySends prob) quorumSize transports = do
+  net <- configureNetwork Normal quorumSize transports
+
+  forM net $ \(node, config) -> do
+    let badBroadcast :: forall a. Serializable a => [NodeId] -> String -> a -> Process ()
+        badBroadcast network name msg = do
+          let coin = (<= prob) <$> liftIO (rng config)
+          subset <- flaky coin (return network)
+          (broadcast config) subset name msg
+          
+    return (node, config { broadcast = badBroadcast })
+
 flaky :: Monad m => m Bool -> m [a] -> m [a]
 flaky coin action = do
   results <- action
@@ -151,7 +166,7 @@ spec = do
       it "obtains a response from all nodes in the majority component" $ do
         length result `shouldBe` 4
 
-    context "under flaky peer locatoin" $ do
+    context "under flaky peer location" $ do
 
       result <- runIO (runNetwork (FlakyPeerLocation 0.5))
 
@@ -159,3 +174,10 @@ spec = do
         S.size (S.fromList result) `shouldBe` 1
 
 
+    context "under flaky message sending" $ do
+
+      result <- runIO (runNetwork (FlakySends 0.5))
+
+      it "agrees on a canonical set of messages" $ do
+        S.size (S.fromList result) `shouldBe` 1
+        

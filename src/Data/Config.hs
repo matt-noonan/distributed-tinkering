@@ -3,13 +3,14 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE RankNTypes #-}
 
 module Data.Config
   ( Config(..)
   , getConfig
   ) where
 
-import Control.Monad (when)
+import Control.Monad (when, forM_)
 import Control.Monad.Primitive
 import Data.Maybe (fromMaybe)
 import System.Exit (die)
@@ -19,7 +20,8 @@ import Data.Vector (singleton)
 
 import Control.Distributed.Process hiding (die)
 import Control.Distributed.Process.Node (LocalNode, initRemoteTable)
- 
+import Control.Distributed.Process.Serializable
+
 -- Tweak this for other backends
 import Control.Distributed.Process.Backend.SimpleLocalnet
 
@@ -52,6 +54,7 @@ data Config = Config
   , makeLocalNode :: IO LocalNode
   , announce :: Process ()
   , network :: Process [NodeId]
+  , broadcast :: forall a. Serializable a => [NodeId] -> String -> a -> Process ()
   , quorum :: Int
   }
 
@@ -73,6 +76,7 @@ getConfig = do
                  , rng = uniformR (0,1) gen
                  , makeLocalNode = newLocalNode backend
                  , announce = return ()
-                 , network = liftIO (findPeers backend 1000000) -- (:[]) <$> getSelfPid
+                 , network = liftIO (findPeers backend 1000000)
+                 , broadcast = \peers name msg -> (forM_ peers $ \peer -> nsendRemote peer name msg)
                  , quorum = 4
                  } )
