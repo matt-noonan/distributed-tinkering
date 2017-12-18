@@ -3,7 +3,7 @@
 {-# LANGUAGE RankNTypes #-}
 
 module Network.Worker
-  ( iohk
+  ( tinker
   , work
   ) where
 
@@ -35,8 +35,8 @@ import Data.Binary.Orphans
 import Data.List (foldl')
 
 -- | Execute the message-sending and agreement phases, and display the result.
-iohk :: Config -> Process ()
-iohk config = do
+tinker :: Config -> Process ()
+tinker config = do
   (count, value) <- work config
   liftIO $ putStrLn ("<" ++ show count ++ "," ++ show value ++ ">")
 
@@ -59,7 +59,7 @@ work config = do
 
     -- Spawn a worker to accumulate incoming random numbers to the "seen" set.
     seen <- liftIO (newMVar S.empty)
-    register "iohk-test" =<< spawnLocal (accumulate seen)
+    register "tinker-test" =<< spawnLocal (accumulate seen)
 
     -- Spawn a worker that will maintain the "canonical" set of messages,
     -- and update it upon request.
@@ -78,7 +78,7 @@ work config = do
 
 
     -- Send everybody in the network random values for sendDuration seconds.
-    yak <- spawnLocal (yakker config (broadcastTo net "iohk-test"))
+    yak <- spawnLocal (yakker config (broadcastTo net "tinker-test"))
     liftIO $ threadDelay (1000000 * sendDuration config)
     kill yak "hush"
 
@@ -112,7 +112,7 @@ instance Ord Msg where
 instance Binary Msg
 
 -- | Receive random numbers and add them to the "seen" set.
---   This is the "iohk-test" named process.
+--   This is the "tinker-test" named process.
 accumulate :: MVar (Set Msg) -> Process ()
 accumulate seen = forever (receiveWait [ match (\msg -> seen %= S.insert msg) ])
 

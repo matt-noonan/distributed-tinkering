@@ -7,13 +7,13 @@ import Control.Distributed.Process
 import Control.Distributed.Process.Node
 
 import Data.Config
-import Network.Worker (iohk)
+import Network.Worker (tinker)
 
 main :: IO ()
 main = do
   config <- getConfig
   node   <- makeLocalNode config
-  pid    <- forkProcess node (iohk config)
+  pid    <- forkProcess node (tinker config)
   
   threadDelay (1000000 * (sendDuration config + waitDuration config))
   

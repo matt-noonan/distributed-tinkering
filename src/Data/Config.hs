@@ -61,7 +61,7 @@ data Config = Config
 -- | Read the configuration from the command line, or report any problems.
 getConfig :: IO Config
 getConfig = do
-  config <- unwrapRecord "Matt Noonan's solution to the IOHK problem"
+  config <- unwrapRecord "Tinkering with Cloud Haskell"
 
   when (sendFor config <= 0) $ die "Duration of message-sending phase must be positive."
   when (waitFor config <= 0) $ die "Duration of wait period must be positive."

@@ -21,8 +21,8 @@ I tested this on OS X and on Linux (CentOS). The test suite passes consistently 
 CentOS, but on OS X I have observed intermittent errors of the form
 
 ```
-iohk-test: kevent: does not exist (No such file or directory)
-iohk-test: kevent: invalid argument (Bad file descriptor)
+tinker: kevent: does not exist (No such file or directory)
+tinker: kevent: invalid argument (Bad file descriptor)
 ```
 
 ## Running your own test cases
